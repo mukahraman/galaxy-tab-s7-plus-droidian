@@ -139,6 +139,15 @@ Droidian (unlike Android) actually needs. The non-obvious fixes:
 
 ---
 
+## Tools (in this repo)
+
+`tools/` has the two device-specific flashing helpers (need `avbtool`, `dtc`, and the public **AOSP testkey** `testkey_rsa4096.pem` passed via `--key`):
+
+- **`build-bootimg.py`** — turns a raw CI `boot.img` into a Samsung-ABL-acceptable, AVB-footered, bootable image (header patch + `console=tty0` + AVB hash footer).
+- **`make-touchpad-dtbo.py`** — patches the stock dtbo for the landscape trackpad (`touchpad,invert <0 1 1> -> <0 0 0>`) and re-signs it; leaves `secdp,redrv="ps5169"` (DP re-driver) intact.
+
+---
+
 ## Credits
 
 Built on the work of the Droidian, Halium, and LineageOS communities, and the Samsung SM8250
