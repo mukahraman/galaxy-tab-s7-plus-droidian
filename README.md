@@ -53,16 +53,17 @@ still untested, the non-obvious fixes that made it work, and how to build/flash.
 | **External display (USB-C DP)** | Monitor/dock over USB-C DP Alt Mode — **full HBR3**, extended desktop. *Needs the PS5169 re-driver enabled (see below).* |
 | **Hardware video decode** | In Epiphany (WebKit→gst-droid) or Clapper |
 | **Deep idle / sleep** | Power-collapses correctly; no idle freeze; good battery |
-| **Wi-Fi** | Connects and is stable (see hazard below) |
+| **Wi-Fi** | Connects and is stable |
+| **Brightness control** | Adjustable (display backlight slider works) |
 | **Power / volume keys** | gpio-keys |
 
 ### ⚠️ Works, with caveats
 
 | Feature | Caveat |
 |---|---|
+| **Volume control** | Audio plays, but the volume slider is effectively all-or-nothing — the same level at every step except 0 (mute). Per-level volume scaling isn't wired up yet. |
 | Browser video | Firefox/Chromium are **software-decode only** (laggy) — use Epiphany/Clapper for HW decode |
 | GPU-accelerated apps | Install **via apt**, not Flatpak — Flatpak's bundled Mesa can't drive the Adreno GPU (no window) |
-| Wi-Fi | **Never** `nmcli down/up` the Wi-Fi — the `cnss` driver wedges userspace for minutes (power-cycle needed). Change routes/profiles manually instead. |
 | External display | Comes up **extended** by default; mirror / mode selection via `wlr-randr` is not pre-configured. **Boot with the cable unplugged, then hotplug** (booting with DP attached causes a transient instability + inverted-touch cascade). |
 | Camera | Portrait **preview** doesn't rotate (orientation pinned for landscape) |
 | Bluetooth HID | Kernel `hidp` is built, but a BT keyboard/mouse hasn't been device-verified yet |
@@ -71,7 +72,6 @@ still untested, the non-obvious fixes that made it work, and how to build/flash.
 
 - Bluetooth **OBEX file transfer** (receive) — needs a Phosh session auto-accept agent (`bluez-obexd` works; not yet packaged)
 - **DisplayPort audio** (audio out over the external monitor)
-- **Brightness control** (auto + manual)
 - **Battery %** / charge-state reporting accuracy
 - **Microphone**, USB-C / BT headset audio out
 - **GPS / location**, **NFC**
