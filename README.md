@@ -2,11 +2,13 @@
 
 A community port of **[Droidian](https://droidian.org)** (Halium + Debian Trixie + Phosh) to the
 **Samsung Galaxy Tab S7+ Wi-Fi**. This repo is the **status & porting guide** — what works, what's
-still untested, the non-obvious fixes that made it work, and how to build/flash.
+still untested, the non-obvious fixes that made it work, and a **step-by-step install guide** (below).
 
 > ⚠️ **Experimental.** Flashing requires an **unlocked bootloader** (which **trips Knox permanently**
 > and voids warranty). You can brick or boot-loop the device; recovery is possible via Download
 > Mode + TWRP, but don't attempt this without understanding the risks. **Not affiliated with Samsung or Droidian.**
+
+**→ Just want to flash it?** Jump to **[Install Droidian — step by step](#install-droidian-step-by-step)** below.
 
 ---
 
@@ -120,31 +122,136 @@ Droidian (unlike Android) actually needs. The non-obvious fixes:
 
 ---
 
-## Build & flash (outline)
+## Install Droidian (step by step)
 
-1. **Kernel**: grab `linux-bootimage-4.19-325-*.deb` from the
-   [kernel Releases](https://github.com/mukahraman/kernel_samsung_sm8250/releases) (branch `droidian`),
-   extract `boot.img`, add the AVB footer (Samsung-ABL-acceptable header + `console=tty0`).
-2. **Rootfs**: build via [`droidian-recipes`](https://github.com/mukahraman/droidian-recipes) (or its release).
-3. **Flash** (Heimdall, from Download Mode — *always multi-file with VBMETA*; single-file commits unreliably on SM8250):
-   ```
-   heimdall flash --VBMETA vbmeta.img --BOOT boot.img --DTBO dtbo.img --no-reboot
-   ```
-   - `vbmeta.img` = a flags=`0x02` (verification-disabled) vbmeta.
-   - For external display + trackpad, the `dtbo.img` must keep `secdp,redrv=ps5169` and use
-     `touchpad,invert=<0 0 0>` (patch the stock dtbo or use the device's CI dtbo).
-4. Userdata = Droidian LVM rootfs.
+From a **stock-Android SM-T970** to a working Droidian desktop. You need a **Linux PC**, a USB-C
+cable, and ~45 minutes. **This erases the tablet.**
 
-> Recovery: keep TWRP on the recovery partition. A bad BOOT is always re-flashable from Download Mode.
+> The Tab S7+ bootloader has **no fastboot**, so Droidian's generic `flash_all.sh` does **not** work
+> here — everything below uses **Heimdall** (the Samsung Download-Mode flasher).
+
+### 0. Set up your PC
+
+```bash
+# Debian/Ubuntu package names (adjust for your distro):
+sudo apt install heimdall-flash android-tools-adb android-sdk-libsparse-utils \
+                 avbtool device-tree-compiler binutils python3 unzip
+```
+
+`simg2img` comes from `android-sdk-libsparse-utils`, `dtc` from `device-tree-compiler`, `ar` from
+`binutils`. Then clone this repo — it carries the flashing tools, the public AOSP test key, and the
+verification-disabled vbmeta you'll flash:
+
+```bash
+git clone https://github.com/mukahraman/galaxy-tab-s7-plus-droidian
+cd galaxy-tab-s7-plus-droidian
+```
+
+### 1. Unlock the bootloader &nbsp; ⚠️ erases all data, trips Knox permanently
+
+1. On the tablet: **Settings → About tablet → Software information** → tap **Build number** 7× (this enables Developer options).
+2. **Settings → Developer options** → turn on **OEM unlocking**.
+3. Power the tablet off. Hold **Volume-Up + Volume-Down** and plug the USB-C cable into your PC → the unlock/Download screen appears. **Long-press Volume-Up** to unlock and confirm; the tablet factory-resets.
+4. Let it reboot into stock Android, **connect to Wi-Fi**, and wait ~5 minutes. Samsung's *VaultKeeper* must phone home and release the bootloader — otherwise Heimdall reaches 100 % then fails with "session end" and nothing is written.
+
+### 2. Download the images
+
+| File | Where |
+|---|---|
+| Droidian rootfs — `droidian-*-gts7xlwifi-*.zip` | [`droidian-recipes` → Releases → **nightly**](https://github.com/mukahraman/droidian-recipes/releases/tag/nightly) (verify against its `SHA256SUMS`) |
+| Kernel — `linux-bootimage-4.19-325-*.deb` | [`kernel_samsung_sm8250` → Releases](https://github.com/mukahraman/kernel_samsung_sm8250/releases) (newest, branch `droidian`) |
+| `twrp-gts7xl-*.img` | any working gts7xl TWRP build — used once, to write the rootfs |
+
+Drop all three into this repo's folder.
+
+### 3. Build the bootable boot.img + dtbo (on your PC)
+
+The Droidian zip *contains* a `boot.img`, but **Samsung's bootloader rejects it as-is** — you wrap your
+own from the kernel `.deb`. That's exactly what `build-bootimg.py` does (header patch + `console=tty0`
++ AVB hash footer); it's the step that took ~50 flash attempts to pin down.
+
+```bash
+# 3a. unpack the kernel .deb → raw boot.img
+ar x linux-bootimage-*.deb
+tar xf data.tar.*
+ls boot/                                     # → boot.img-4.19-325-...
+
+# 3b. wrap it into a Samsung-ABL-acceptable image (signed with the bundled AOSP testkey)
+python3 tools/build-bootimg.py boot/boot.img-* boot-tab.img
+
+# 3c. unpack the Droidian rootfs zip
+unzip droidian-*-gts7xlwifi-*.zip -d droidian
+#   droidian/data/userdata.img  ← the rootfs      droidian/data/dtbo.img
+
+# 3d. fix the Book Cover trackpad orientation in the dtbo (DP re-driver kept intact)
+python3 tools/make-touchpad-dtbo.py droidian/data/dtbo.img dtbo-tab.img
+#   no keyboard cover? skip this and flash droidian/data/dtbo.img instead
+```
+
+You'll flash three small images: **`boot-tab.img`**, **`dtbo-tab.img`**, and the bundled
+**`vbmeta-disabled.img`** (verification disabled). ⚠️ **Don't** use the zip's own `vbmeta.img` — it's
+flags=1, and the bootloader won't accept the test-key-signed boot under it.
+
+### 4. Flash recovery, then write the rootfs
+
+Reboot to **Download Mode** (power off → hold **Volume-Up + Volume-Down** → plug in USB; or
+`adb reboot download`).
+
+```bash
+# always include --VBMETA in the same command; single-image flashes commit unreliably on SM8250
+heimdall flash --VBMETA vbmeta-disabled.img --RECOVERY twrp-gts7xl-*.img --DTBO dtbo-tab.img --no-reboot
+```
+
+Boot TWRP: hold **Volume-Up + Power** until the splash. Then write the ~4.4 GB rootfs over adb:
+
+```bash
+simg2img droidian/data/userdata.img userdata.raw.img
+cat userdata.raw.img | adb shell -T "dd of=/dev/block/by-name/userdata bs=4M"
+```
+
+(~5 minutes. The `cat | adb shell -T` pipe is required — TWRP's busybox `dd` won't stream a
+redirected file on its own.)
+
+### 5. Flash the kernel and boot Droidian
+
+```bash
+adb reboot download          # back to Download Mode (or use the key combo)
+heimdall flash --VBMETA vbmeta-disabled.img --BOOT boot-tab.img --DTBO dtbo-tab.img --no-reboot
+```
+
+Exit Download Mode with **Volume-Down + Power**, then let go and **press nothing**. Droidian boots —
+the first boot takes 1–2 minutes to reach the Phosh welcome screen.
+
+> **Landed in TWRP instead of Droidian?** The boot-control block is latched to recovery. Boot TWRP,
+> clear it, then redo step 5:
+> ```bash
+> adb shell dd if=/dev/zero of=/dev/block/by-name/misc bs=4096 count=1
+> ```
+
+### 6. First boot
+
+Complete the Phosh welcome wizard with the **touchscreen** and the **Book Cover keyboard** — both work
+out of the box, and the panel is landscape-native. You're on Droidian.
+
+> **External monitor:** boot with the USB-C cable **unplugged**, then hotplug your dock/monitor
+> (booting with DP already attached triggers a transient touch-inversion cascade).
+
+A bad `boot-tab.img` is always recoverable: just re-flash from Download Mode (step 5) — your install on
+`userdata` survives, so you repeat only the boot flash, not the whole procedure.
 
 ---
 
-## Tools (in this repo)
+## What's in this repo
 
-`tools/` has the two device-specific flashing helpers (need `avbtool`, `dtc`, and the public **AOSP testkey** `testkey_rsa4096.pem` passed via `--key`):
+`tools/` (need `avbtool` + `dtc` in PATH):
 
-- **`build-bootimg.py`** — turns a raw CI `boot.img` into a Samsung-ABL-acceptable, AVB-footered, bootable image (header patch + `console=tty0` + AVB hash footer).
-- **`make-touchpad-dtbo.py`** — patches the stock dtbo for the landscape trackpad (`touchpad,invert <0 1 1> -> <0 0 0>`) and re-signs it; leaves `secdp,redrv="ps5169"` (DP re-driver) intact.
+- **`build-bootimg.py`** — turns a raw kernel `boot.img` into a Samsung-ABL-acceptable, AVB-footered, bootable image (header patch + `console=tty0` + AVB hash footer).
+- **`make-touchpad-dtbo.py`** — patches the dtbo for the landscape trackpad (`touchpad,invert <0 1 1> → <0 0 0>`) and re-signs it; leaves `secdp,redrv="ps5169"` (DP re-driver) intact.
+
+Bundled so the tools and the flash work out-of-the-box:
+
+- **`testkey_rsa4096.pem`** — the public **AOSP AVB test key** both tools sign with (their `--key` default). Not a secret — it's the standard AOSP test key, usable here only because `vbmeta` verification is disabled.
+- **`vbmeta-disabled.img`** — a 64 KB vbmeta with verification disabled (flags `0x02`). Regenerate with `avbtool make_vbmeta_image --flags 2 --padding_size 65536 --output vbmeta-disabled.img`.
 
 ---
 
